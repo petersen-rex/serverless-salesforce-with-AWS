@@ -5,35 +5,33 @@ const sfpass = process.env.SFPASS;
 const clientID = process.env.CLIENTID;
 const clientSecret = process.env.CLIENTSECRET;
 
-const auth = {
-    org: {},
-    oauth: {}
-}
-
-const response = {
-    statusCode:200,
-    headers: {
-        "Access-Control-Allow-Origin": "*"
-    },
-    body: "",
-}
+const auth = {};
 
 async function authenticate(){
-    console.log("creating connection");
+    console.debug("authenticating");
+    if( !auth.oauth){
+        console.debug("getting Org");
+        auth.org = nforce.createConnection({
+            clientId: clientID,
+            clientSecret: clientSecret,
+            redirectUri: 'http://localhost:3000/oauth/_callback',
+            autoRefresh: true,
+            onRefresh: function(newOauth, oldOauth, cb) {
+                auth.oauth=newOauth;
+                cb();
+            }
 
-    auth.org = nforce.createConnection({
-        clientId: clientID,
-        clientSecret: clientSecret,
-        redirectUri: 'http://localhost:3000/oauth/_callback'
-    });
+        });
+        console.log(JSON.stringify(auth.org));
+        auth.oauth = await auth.org.authenticate({ username: sfuser, password: sfpass});
+        console.log(JSON.stringify(auth.oauth));
+    }
+    if(!auth.oauth) throw ({message:"Could not authenticate"});
 
-    auth.oauth = await auth.org.authenticate({ username: sfuser, password: sfpass});
 }
 
 async function newContact(event){
     await authenticate();
-    
-    if(!auth.oauth) return response;
 
     var body = JSON.parse(event.body);
 
@@ -44,17 +42,12 @@ async function newContact(event){
     var body = {
         oauth: auth.oauth
     }
-    response.body = JSON.stringify(body);
-
-    return response;
+    return JSON.stringify(body);
 
 }
 async function deleteContact(contactID){
     await authenticate();
     
-    if(!auth.oauth) return response;
-
-
     var contactObject = nforce.createSObject("Contact",{id:contactID});
 
     await auth.org.delete({sobject: contactObject, oauth:auth.oauth});
@@ -62,17 +55,13 @@ async function deleteContact(contactID){
     var body = {
         oauth: auth.oauth
     }
-    response.body = JSON.stringify(body);
-
-    return response;
+    return JSON.stringify(body);
 
 }
 
 async function updateContact(contactID, event){
     await authenticate();
     
-    if(!auth.oauth) return response;
-
     var body = JSON.parse(event.body);
 
     var contactObject = nforce.createSObject("Contact", body);
@@ -82,37 +71,24 @@ async function updateContact(contactID, event){
     var body = {
         oauth: auth.oauth
     }
-    response.body = JSON.stringify(body);
-
-    return response;
+    return JSON.stringify(body);
 
 }
 
 async function getContact(contactID){
     await authenticate();
     
-    if(!auth.oauth) return response;
-
     var contact = await auth.org.getRecord({ type: 'contact', id: contactID, oauth: auth.oauth });
 
     var body = {
         record: contact,
         auth: auth
     }
-    response.body = JSON.stringify(body);
-
-    return response;
-
+    return JSON.stringify(body);
 }
 
 async function getContacts(){
-    console.log("getContacts");
-
     await authenticate();
-
-    console.log("got Oauth: " + JSON.stringify(auth.oauth));
-
-    if(!auth.oauth) return response;
 
     var query = 'SELECT Id, FirstName, LastName, Phone, Email, Account.Name FROM Contact';
 
@@ -122,31 +98,46 @@ async function getContacts(){
         records : queryResults.records,
         oauth : auth.oauth,
     }
-    response.body=JSON.stringify(body);
-
-    return response;
+    return JSON.stringify(body);
 }
 
 async function sfRouter(event, context){
-    
-    if (!event && !event.path) return response;
-    
-    console.log("Event " +  JSON.stringify(event));
+    var response = {
+        statusCode:200,
+        headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": true
+        },
+        body: "",
+    }
 
+    if (!event || !event.path) {
+        response.statusCode=500; 
+        return response; 
+    }
+    
     const restResource = event.path.split("/")[1];
     const restArgument = event.path.split("/")[2];
 
-    var dispatchCommand = event.httpMethod+"-"+restResource+"-"+(restArgument?"arg":"noarg"); 
+    const dispatchCommand = event.httpMethod+"-"+restResource+"-"+(restArgument?"arg":"noarg"); 
     console.log("dispatchCommand: " + dispatchCommand);
+    console.log("Upon entry, Auth: " + JSON.stringify(auth));
 
-    switch (dispatchCommand){
-        case "GET-contacts-arg"     : return getContact(restArgument);
-        case "GET-contacts-noarg"   : return getContacts();
-        case "PUT-contacts-arg"     : return updateContact(restArgument, event);
-        case "POST-contacts-noarg"  : return newContact(event);
-        case "DELETE-contacts-arg"  : return deleteContact(restArgument);
-        default: response.body = "no action defined for: " + dispatchCommand;
+    try {
+        switch (dispatchCommand){
+            case "GET-contacts-arg"     : response.body = await getContact(restArgument); break;
+            case "GET-contacts-noarg"   : response.body = await getContacts(); break;
+            case "PUT-contacts-arg"     : response.body = await updateContact(restArgument, event); break;
+            case "POST-contacts-noarg"  : response.body = await newContact(event); break;
+            case "DELETE-contacts-arg"  : response.body = deleteContact(restArgument); break;
+            default: response.body = "No action defined for: " + dispatchCommand;
+        }
         return response; 
+    } catch(e){
+        console.error(e);
+        response.body=JSON.stringify(e);
+        response.statusCode=500;
+        return response;
     }
 }
 
