@@ -129,7 +129,7 @@ async function sfRouter(event, context){
             case "GET-contacts-noarg"   : response.body = await getContacts(); break;
             case "PUT-contacts-arg"     : response.body = await updateContact(restArgument, event); break;
             case "POST-contacts-noarg"  : response.body = await newContact(event); break;
-            case "DELETE-contacts-arg"  : response.body = deleteContact(restArgument); break;
+            case "DELETE-contacts-arg"  : response.body = await deleteContact(restArgument); break;
             default: response.body = "No action defined for: " + dispatchCommand;
         }
         return response; 
